@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Weather App</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.min.css">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+
+<body id="app">
+    <div v-if="isLoading" class="loader"></div>
+    <div class="mainContainer" v-else>
+        <div class="selectedDay">
+            <div class="locationDate">
+                <h2>{{ currentDay.weekDay }}</h2>
+                <h4>{{ location }}</h4>
+                <h4>Date</h4>
+            </div>
+            <div class="locationInfo">
+                <i :class="`bi ${currentDay.icon}`"></i>
+                <h3><span id="highestTemp">Max</span><span>{{ currentDay.tempMax}} °C</span></h3>
+                <h3><span id="lowestTemp">Min</span><span>{{ currentDay.tempMin}} °C</span></h3>
+                <h4>Information</h4>
+            </div>
+        </div>
+        <div class="weatherOverview">
+            <div class="moreInfo">
+                <h3>Info 1</h3>
+                <h3>Info 2</h3>
+                <h3>Info 3</h3>
+            </div>
+
+            <div class="containerDays">
+                <div v-for="day in days" :key="day.id">
+                    <div :class="{ 'day': true, 'active': isActiveDay(day.id) }" @click="loadSelectedDay(day)">
+                        <i :class="`bi ${day.icon}`"></i>
+                        <p>{{ day.weekDay.substring(0, 3) }}</p>
+                        <p>{{ day.tempMax }}</p>
+                    </div>
+                </div>
+            </div>
+            <button id="locationBtn" type="submit" @click="getLocation()">Location Change</button>
+        </div>
+    </div>
+</body>
+<script>
+    const { createApp, ref } = Vue
+
+    createApp({
+        setup() {
+
+            let days = ref([]);
+            let activeDayId = ref(0);
+            let isLoading = ref(false);
+            let currentDay = ref({});
+            let location = ref('');
+
+            window.addEventListener('onload', getLocation());
+
+            function getLocation () {
+
+                const options = {
+                    enableHighAccuracy: true,
+                    timeout: 5000,
+                    maximumAge: 0,
+                };
+
+                function success(pos) {
+                    const crd = pos.coords;
+                    fetchInformation(crd).then(data => {
+                        formatLayout(data);
+                    }).catch(error => {
+                        console.error('Error:', error);
+                    });
+
+                    reverseGeocode(crd.latitude, crd.longitude)
+                        .then(name => {
+                            location.value = `${name.postcode}, ${name.city}`;
+                        })
+                        .catch(error => console.error(error));
+
+                }
+
+                function error(err) {
+                    console.warn(`ERROR(${err.code}): ${err.message}`);
+                }
+
+                navigator.geolocation.getCurrentPosition(success, error, options);
+            }
+            async function fetchInformation(locationinfo) {
+                const url = 'https://api.open-meteo.com/v1/dwd-icon?' +
+                    `latitude=${locationinfo.latitude}&longitude=${locationinfo.longitude}` +
+                    '&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,rain_sum,showers_sum,snowfall_sum,wind_speed_10m_max&timezone=Europe%2FBerlin&forecast_days=4'
+
+                const response = await fetch(url);
+                if (response.ok) {
+                    const data = await response.json();
+                    return data;
+                } else {
+                    throw new Error('Network response was not ok.');
+                }
+            }
+
+            function formatLayout(data){
+
+                const locationData = data.daily;
+
+                function getIcon(weatherCode) {
+                    // Kein Niederschlag
+                    if (weatherCode <= 49) {
+                        if(weatherCode === 0) return 'bi-brightness-high';
+                        if (weatherCode <= 3) return 'bi-cloud-sun';
+                        if (weatherCode <= 9) return 'bi-cloud'; // Allgemein bewölkt oder spezielle atmosphärische Bedingungen
+                        if (weatherCode <= 19) return 'bi-cloud-lightning'; // Gewitterbedingungen
+                        if (weatherCode <= 29) return 'bi-cloud-drizzle'; // Niederschlag, Nebel
+                        return 'bi-cloud-fog'; // Staub, Sand, Schneetreiben
+                    }
+
+                    // Niederschlag
+                    if (weatherCode <= 79) {
+                        if (weatherCode <= 59) return 'bi-cloud-drizzle'; // Nieselregen
+                        if (weatherCode <= 69) return 'bi-cloud-rain-heavy'; // Regen
+                        if (weatherCode <= 79) return 'bi-cloud-snow'; // Fester Niederschlag (Schnee, Eiskörner)
+                    }
+
+                    // Schauerartiger Niederschlag, Gewitter
+                    if (weatherCode <= 99) {
+                        if (weatherCode <= 89) return 'bi-cloud-rain'; // Schauer
+                        return 'bi-cloud-lightning-rain'; // Gewitter
+                    }
+
+                    // Standard-Icon für unbekannte Codes
+                    return 'bi-cloud';
+                }
+
+                for(let i = 0; i < 4; i++){
+
+                    days.value.push(
+                        {
+                            id: i,
+                            date : locationData.time[i],
+                            weekDay : getWeekday(locationData.time[i]),
+                            tempMax : locationData.temperature_2m_max[i],
+                            tempMin : locationData.temperature_2m_min[i],
+                            sunrise : locationData.sunrise[i],
+                            sunset : locationData.sunset[i],
+                            icon : getIcon(locationData.weather_code[i]),
+                            windSpeed : locationData.wind_speed_10m_max[i],
+                            class : 'day '
+                        }
+                    )
+                }
+
+
+
+
+                if (days.value.length > 0) {
+                    loadSelectedDay(days.value[0]);
+                }
+
+            }
+
+            async function reverseGeocode(latitude, longitude) {
+                const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+                if (!response.ok) {
+                    throw new Error('Network response was not ok.');
+                }
+                const data = await response.json();
+                return data.address;
+            }
+
+            function loadSelectedDay(day) {
+                activeDayId.value = day.id;
+                currentDay.value = day;
+            }
+
+            function isActiveDay(dayId) {
+                return activeDayId.value === dayId;
+            }
+
+            function getWeekday(dateString) {
+                const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                const date = new Date(dateString);
+                return days[date.getDay()];
+            }
+
+
+            return {
+                days,
+                getLocation,
+                isLoading,
+                loadSelectedDay,
+                isActiveDay,
+                currentDay,
+                location
+            }
+        }
+    }).mount('#app')
+</script>
+<style>
+    *{
+        margin: 0;
+        padding: 0;
+        color:white;
+    }
+
+    span {
+        color: black;
+    }
+
+    .loader {
+        border: 5px solid #f3f3f3;
+        border-top: 5px solid #3498db;
+        border-radius: 50%;
+        animation: spin 2s linear infinite;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+
+    body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+    }
+
+    h2{
+        font-size: 45px;
+    }
+
+    h3{
+        font-size: 22px;
+    }
+
+    i {
+        font-size: 100px;
+    }
+
+    .mainContainer{
+        width: 70%;
+        aspect-ratio: 3/2;
+        display: grid;
+        grid-template-columns: 3fr 4fr;
+    }
+
+    .selectedDay{
+        background-color: #abc4f1;
+        transition: all 0.2s ease-out;
+        padding: 20px;
+        border-top-left-radius: 10px;
+        border-bottom-left-radius: 10px;
+        display: grid;
+        grid-template-rows: 2fr;
+    }
+
+    .selectedDay:hover{
+        transform: scale(1.05) scaleX(1.02);
+        animation: ease-in;
+        cursor: pointer;
+        border-radius: 10px;
+    }
+
+    .weatherOverview{
+        background-color: #2a2a2a;
+        grid-column-start: 2;
+        border-bottom-right-radius: 10px;
+        border-top-right-radius: 10px;
+        padding: 20px;
+        display: grid;
+        grid-template-rows: 2fr 2fr 1fr;
+    }
+
+    .containerDays{
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        align-self: center;
+        gap: 10px;
+    }
+
+    .day{
+        border: 1px solid white;
+        border-radius: 15px;
+        text-align: center;
+        transition: all 0.2s ease-out;
+        cursor: pointer;
+        display: flex;
+        justify-content: end;
+        align-items: center;
+        flex-direction: column;
+        padding-bottom: 20px;
+        height: 100%;
+    }
+
+    .locationInfo{
+        display: grid;
+        row-gap: 20px;
+    }
+
+    .locationInfo h3{
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .locationInfo h3 span {
+        color: white;
+    }
+
+    #lowestTemp {
+        color: dodgerblue;
+    }
+
+    #highestTemp{
+        color: red;
+    }
+
+    .day i {
+        color: white;
+        font-size: 35px;
+    }
+
+    .day:hover{
+        background-color: white;
+        transform: scale(1.1);
+    }
+
+    .day:hover i{
+        color:black;
+    }
+
+    .active {
+        color: black;
+        background-color: white;
+        transform: scale(1.1);
+    }
+
+    .active i {
+        color: black;
+    }
+
+    .active>p{
+        color: black;
+    }
+
+    .day:hover p{
+        color:black;
+    }
+
+    #locationBtn{
+        grid-row-start: 3;
+        align-self: center;
+        height: 50%;
+        color: black;
+        border-radius: 20px;
+        cursor: pointer;
+    }
+
+
+</style>
+</html>
